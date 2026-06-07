@@ -159,7 +159,7 @@ async def crear_ticket(interaction: discord.Interaction, monto: str):
 
 
 # Comando para enviar el panel de tickets al canal
-@client.tree.command(name="panel-tickets", description="Envía el panel de tickets al canal actual")
+@client.tree.command(name="paneltickets", description="Envía el panel de tickets al canal actual")
 @app_commands.checks.has_permissions(administrator=True)
 async def panel_tickets(interaction: discord.Interaction):
     embed = discord.Embed(
