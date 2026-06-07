@@ -16,17 +16,16 @@ intents.members = True
 
 # IDs de roles
 ROLES = {
-    "jugador":   1470922979129954345,   # 1 - 99
-    "apostador": 1513241891217346832,   # 100 - 499
-    "moneybag":  1513241967524315326,   # 500 - 999
-    "cheetah":   1513241965179961565,   # 1000 - 2499
-    "goat":      1513241951397478601,   # 2500 - 4999
-    "whale":     1513242078342025297,   # 5000 - 10000
+    "jugador":   1470922979129954345,
+    "apostador": 1513241891217346832,
+    "moneybag":  1513241967524315326,
+    "cheetah":   1513241965179961565,
+    "goat":      1513241951397478601,
+    "whale":     1513242078342025297,
 }
 
 LOGS_CANAL_ID = 1467240912718659615
 TODOS_LOS_ROLES = list(ROLES.values())
-
 estadisticas = {}
 
 class MyClient(discord.Client):
@@ -43,12 +42,12 @@ client = MyClient()
 #  Funciones de rol y log
 # ─────────────────────────────────────────
 def obtener_rol_id(monto: int):
-    if 1 <= monto <= 99:        return ROLES["jugador"]
-    elif 100 <= monto <= 499:   return ROLES["apostador"]
-    elif 500 <= monto <= 999:   return ROLES["moneybag"]
-    elif 1000 <= monto <= 2499: return ROLES["cheetah"]
-    elif 2500 <= monto <= 4999: return ROLES["goat"]
-    elif 5000 <= monto <= 10000:return ROLES["whale"]
+    if 1 <= monto <= 99:         return ROLES["jugador"]
+    elif 100 <= monto <= 499:    return ROLES["apostador"]
+    elif 500 <= monto <= 999:    return ROLES["moneybag"]
+    elif 1000 <= monto <= 2499:  return ROLES["cheetah"]
+    elif 2500 <= monto <= 4999:  return ROLES["goat"]
+    elif 5000 <= monto <= 10000: return ROLES["whale"]
     return None
 
 async def asignar_rol(guild, miembro, monto):
@@ -78,6 +77,207 @@ def registrar_resultado(user_id, gano, monto):
     estadisticas[user_id]["total_apostado"] += monto
 
 # ─────────────────────────────────────────
+#  Modal: pedir ganador y monto al cerrar
+# ─────────────────────────────────────────
+class CerrarModal(discord.ui.Modal, title="🔒 Cerrar Ticket"):
+    tipo = discord.ui.Select(placeholder="Selecciona el tipo de ticket")
+
+    ganador_id = discord.ui.TextInput(
+        label="ID del ganador (deja vacío si fue MM o nadie ganó)",
+        placeholder="Ej: 123456789012345678",
+        required=False,
+        max_length=30
+    )
+    monto = discord.ui.TextInput(
+        label="Monto apostado en USD (deja vacío si fue MM)",
+        placeholder="Ej: 500",
+        required=False,
+        max_length=10
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        guild = interaction.guild
+        canal = interaction.channel
+        ganador_id = self.ganador_id.value.strip()
+        monto_str = self.monto.value.strip()
+
+        # Caso: solo middleman
+        if not ganador_id and not monto_str:
+            embed_log = discord.Embed(
+                title="🤝 Ticket de Middleman Cerrado",
+                description=(
+                    f"📁 **Ticket:** {canal.name}\n"
+                    f"✅ Servicio de MM completado sin apuesta\n"
+                    f"🔒 Cerrado por {interaction.user.mention}"
+                ),
+                color=discord.Color.blue()
+            )
+            await enviar_log(guild, embed_log)
+            embed_cierre = discord.Embed(
+                title="🔒 Ticket Cerrado",
+                description="✅ Servicio de middleman completado.\nEste canal se eliminará en 5 segundos.",
+                color=discord.Color.blue()
+            )
+            await canal.send(embed=embed_cierre)
+            await asyncio.sleep(5)
+            await canal.delete()
+            return
+
+        # Caso: nadie ganó (hay monto pero no ganador)
+        if monto_str and not ganador_id:
+            monto_int = int(monto_str) if monto_str.isdigit() else 0
+            embed_log = discord.Embed(
+                title="🤝 Ticket Cerrado - Sin Ganador",
+                description=(
+                    f"📁 **Ticket:** {canal.name}\n"
+                    f"💵 **Monto:** ${monto_int} USD\n"
+                    f"❌ No hubo ganador\n"
+                    f"🔒 Cerrado por {interaction.user.mention}"
+                ),
+                color=discord.Color.orange()
+            )
+            await enviar_log(guild, embed_log)
+            embed_cierre = discord.Embed(
+                title="🔒 Ticket Cerrado",
+                description=f"❌ No hubo ganador.\n💵 Monto: ${monto_int} USD\nEste canal se eliminará en 5 segundos.",
+                color=discord.Color.orange()
+            )
+            await canal.send(embed=embed_cierre)
+            await asyncio.sleep(5)
+            await canal.delete()
+            return
+
+        # Caso: hay ganador
+        try:
+            ganador = guild.get_member(int(ganador_id))
+            if not ganador:
+                ganador = await guild.fetch_member(int(ganador_id))
+        except:
+            await interaction.followup.send("⚠️ No se encontró al ganador con esa ID.", ephemeral=True)
+            return
+
+        monto_int = int(monto_str) if monto_str.isdigit() else 0
+
+        # Registrar estadísticas
+        perdedor = None
+        async for msg in canal.history(limit=100):
+            if msg.author != client.user and msg.author != ganador and not msg.author.bot:
+                perdedor = msg.author
+                break
+
+        registrar_resultado(ganador.id, True, monto_int)
+        if perdedor:
+            registrar_resultado(perdedor.id, False, monto_int)
+
+        # Asignar rol
+        nuevo_rol = await asignar_rol(guild, ganador, monto_int)
+
+        # Log
+        embed_log = discord.Embed(
+            title="📢 ¡Nuevo Ganador!",
+            description=(
+                f"🏆 {ganador.mention} ganó la apuesta\n"
+                f"💵 **Monto:** ${monto_int} USD\n"
+                f"🎖️ **Rol asignado:** {nuevo_rol.mention if nuevo_rol else 'N/A'}\n"
+                f"📁 **Ticket:** {canal.name}\n"
+                f"🔒 Cerrado por {interaction.user.mention}"
+            ),
+            color=discord.Color.green()
+        )
+        await enviar_log(guild, embed_log)
+
+        # Mensaje de cierre
+        embed_cierre = discord.Embed(
+            title="🔒 Ticket Cerrado",
+            description=(
+                f"✅ Apuesta finalizada\n"
+                f"🏆 **Ganador:** {ganador.mention}\n"
+                f"💵 **Monto:** ${monto_int} USD\n\n"
+                f"Este canal se eliminará en 5 segundos."
+            ),
+            color=discord.Color.green()
+        )
+        await canal.send(embed=embed_cierre)
+        await asyncio.sleep(5)
+        await canal.delete()
+
+
+# ─────────────────────────────────────────
+#  Botón de cerrar ticket (abre el modal)
+# ─────────────────────────────────────────
+class CerrarTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="cerrar_ticket")
+    async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("⚠️ Solo los administradores pueden cerrar tickets.", ephemeral=True)
+            return
+        await interaction.response.send_modal(CerrarModal())
+
+
+# ─────────────────────────────────────────
+#  Sistema de tickets
+# ─────────────────────────────────────────
+class TicketMontoView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="💵 0 - 200 USD", style=discord.ButtonStyle.success, custom_id="ticket_0_200")
+    async def ticket_0_200(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await crear_ticket(interaction, "0 - 200 USD")
+
+    @discord.ui.button(label="💰 200 - 500 USD", style=discord.ButtonStyle.primary, custom_id="ticket_200_500")
+    async def ticket_200_500(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await crear_ticket(interaction, "200 - 500 USD")
+
+    @discord.ui.button(label="💎 1K USD+", style=discord.ButtonStyle.danger, custom_id="ticket_1k")
+    async def ticket_1k(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await crear_ticket(interaction, "1K USD+")
+
+async def crear_ticket(interaction: discord.Interaction, monto: str):
+    guild = interaction.guild
+    usuario = interaction.user
+
+    canal_existente = discord.utils.get(guild.channels, name=f"ticket-{usuario.name.lower()}")
+    if canal_existente:
+        await interaction.response.send_message(f"⚠️ Ya tienes un ticket abierto: {canal_existente.mention}", ephemeral=True)
+        return
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        usuario: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+        guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+    }
+
+    categoria = discord.utils.get(guild.categories, name="TICKETS")
+    if not categoria:
+        categoria = await guild.create_category("TICKETS")
+
+    canal = await guild.create_text_channel(
+        name=f"ticket-{usuario.name.lower()}",
+        overwrites=overwrites,
+        category=categoria
+    )
+
+    embed = discord.Embed(
+        title="🎰 Ticket de Apuesta",
+        description=(
+            f"Hola {usuario.mention}, bienvenido a tu ticket!\n\n"
+            f"💼 **Monto seleccionado:** `{monto}`\n\n"
+            f"Un administrador te atenderá pronto.\n"
+            f"Mientras tanto, describe tu apuesta o cualquier detalle adicional."
+        ),
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text="El admin cerrará el ticket al finalizar la apuesta.")
+    await canal.send(embed=embed, view=CerrarTicketView())
+    await interaction.response.send_message(f"✅ Tu ticket fue creado: {canal.mention}", ephemeral=True)
+
+
+# ─────────────────────────────────────────
 #  Evento: bot listo
 # ─────────────────────────────────────────
 @client.event
@@ -95,9 +295,7 @@ async def on_message(message):
         return
     if message.content.strip().lower() == "-jugar":
         resultado = random.choice(["🪙 **¡CARA!**", "🔵 **¡SELLO!**"])
-        await message.channel.send(
-            f"🎲 {message.author.mention} lanzó la moneda...\n➡️ {resultado}"
-        )
+        await message.channel.send(f"🎲 {message.author.mention} lanzó la moneda...\n➡️ {resultado}")
 
 # ─────────────────────────────────────────
 #  Comando: /moneda
@@ -105,9 +303,7 @@ async def on_message(message):
 @client.tree.command(name="moneda", description="Lanza una moneda: cara o sello")
 async def moneda(interaction: discord.Interaction):
     resultado = random.choice(["🪙 **¡CARA!**", "🔵 **¡SELLO!**"])
-    await interaction.response.send_message(
-        f"🎲 {interaction.user.mention} lanzó la moneda...\n➡️ {resultado}"
-    )
+    await interaction.response.send_message(f"🎲 {interaction.user.mention} lanzó la moneda...\n➡️ {resultado}")
 
 # ─────────────────────────────────────────
 #  Comando: /dados
@@ -171,135 +367,6 @@ async def ranking(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 # ─────────────────────────────────────────
-#  Comando: /cerrar (solo admins, dentro de ticket)
-# ─────────────────────────────────────────
-@client.tree.command(name="cerrar", description="Cierra el ticket, registra resultado y anuncia al ganador")
-@app_commands.describe(
-    ganador="Menciona al usuario ganador",
-    monto="Monto apostado en USD"
-)
-@app_commands.checks.has_permissions(administrator=True)
-async def cerrar(interaction: discord.Interaction, ganador: discord.Member, monto: int):
-    if not interaction.channel.name.startswith("ticket-"):
-        await interaction.response.send_message("⚠️ Este comando solo se usa dentro de un ticket.", ephemeral=True)
-        return
-
-    # Registrar estadísticas
-    # Buscar al perdedor (el otro usuario en el canal que no es el ganador ni el bot)
-    perdedor = None
-    async for msg in interaction.channel.history(limit=100):
-        if msg.author != client.user and msg.author != ganador:
-            perdedor = msg.author
-            break
-
-    registrar_resultado(ganador.id, True, monto)
-    if perdedor:
-        registrar_resultado(perdedor.id, False, monto)
-
-    # Asignar rol al ganador
-    nuevo_rol = await asignar_rol(interaction.guild, ganador, monto)
-
-    # Anuncio en #logs
-    embed_log = discord.Embed(
-        title="📢 ¡Nuevo Ganador!",
-        description=(
-            f"🏆 {ganador.mention} ganó la apuesta\n"
-            f"💵 **Monto:** ${monto} USD\n"
-            f"🎖️ **Rol asignado:** {nuevo_rol.mention if nuevo_rol else 'N/A'}\n"
-            f"📁 **Ticket:** {interaction.channel.name}"
-        ),
-        color=discord.Color.green()
-    )
-    embed_log.set_footer(text=f"Cerrado por {interaction.user.display_name}")
-    await enviar_log(interaction.guild, embed_log)
-
-    # Mensaje en el ticket antes de cerrar
-    embed_cierre = discord.Embed(
-        title="🔒 Ticket Cerrado",
-        description=(
-            f"✅ Apuesta finalizada\n"
-            f"🏆 **Ganador:** {ganador.mention}\n"
-            f"💵 **Monto:** ${monto} USD\n\n"
-            f"Este canal se eliminará en 5 segundos."
-        ),
-        color=discord.Color.red()
-    )
-    await interaction.response.send_message(embed=embed_cierre)
-    await asyncio.sleep(5)
-    await interaction.channel.delete()
-
-# ─────────────────────────────────────────
-#  SISTEMA DE TICKETS
-# ─────────────────────────────────────────
-class TicketMontoView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="💵 0 - 200 USD", style=discord.ButtonStyle.success, custom_id="ticket_0_200")
-    async def ticket_0_200(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await crear_ticket(interaction, "0 - 200 USD")
-
-    @discord.ui.button(label="💰 200 - 500 USD", style=discord.ButtonStyle.primary, custom_id="ticket_200_500")
-    async def ticket_200_500(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await crear_ticket(interaction, "200 - 500 USD")
-
-    @discord.ui.button(label="💎 1K USD+", style=discord.ButtonStyle.danger, custom_id="ticket_1k")
-    async def ticket_1k(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await crear_ticket(interaction, "1K USD+")
-
-class CerrarTicketView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="🔒 Cerrar Ticket", style=discord.ButtonStyle.danger, custom_id="cerrar_ticket")
-    async def cerrar_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("⚠️ Solo los administradores pueden cerrar tickets.", ephemeral=True)
-            return
-        await interaction.response.send_message("🔒 Cerrando ticket en 5 segundos...", ephemeral=True)
-        await asyncio.sleep(5)
-        await interaction.channel.delete()
-
-async def crear_ticket(interaction: discord.Interaction, monto: str):
-    guild = interaction.guild
-    usuario = interaction.user
-
-    canal_existente = discord.utils.get(guild.channels, name=f"ticket-{usuario.name.lower()}")
-    if canal_existente:
-        await interaction.response.send_message(f"⚠️ Ya tienes un ticket abierto: {canal_existente.mention}", ephemeral=True)
-        return
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        usuario: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-        guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-    }
-
-    categoria = discord.utils.get(guild.categories, name="TICKETS")
-    if not categoria:
-        categoria = await guild.create_category("TICKETS")
-
-    canal = await guild.create_text_channel(
-        name=f"ticket-{usuario.name.lower()}",
-        overwrites=overwrites,
-        category=categoria
-    )
-
-    embed = discord.Embed(
-        title="🎰 Ticket de Apuesta",
-        description=(
-            f"Hola {usuario.mention}, bienvenido a tu ticket!\n\n"
-            f"💼 **Monto seleccionado:** `{monto}`\n\n"
-            f"Un administrador te atenderá pronto.\n"
-            f"Mientras tanto, describe tu apuesta o cualquier detalle adicional."
-        ),
-        color=discord.Color.gold()
-    )
-    embed.set_footer(text="El admin cerrará el ticket al finalizar la apuesta.")
-    await canal.send(embed=embed, view=CerrarTicketView())
-    await interaction.response.send_message(f"✅ Tu ticket fue creado: {canal.mention}", ephemeral=True)
-
-# ─────────────────────────────────────────
 #  Comando: /agregar
 # ─────────────────────────────────────────
 @client.tree.command(name="agregar", description="Agrega a una persona al ticket por su ID de Discord")
@@ -347,4 +414,3 @@ async def panel_tickets(interaction: discord.Interaction):
 #  Iniciar el bot
 # ─────────────────────────────────────────
 client.run(TOKEN)
-
