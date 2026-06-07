@@ -326,6 +326,7 @@ async def agregar(interaction: discord.Interaction, userid: str):
 @client.tree.command(name="paneltickets", description="Envía el panel de tickets al canal actual")
 @app_commands.checks.has_permissions(administrator=True)
 async def panel_tickets(interaction: discord.Interaction):
+    await interaction.response.defer()
     embed = discord.Embed(
         title="🎰 Sistema de Apuestas",
         description=(
@@ -340,9 +341,10 @@ async def panel_tickets(interaction: discord.Interaction):
         color=discord.Color.gold()
     )
     embed.set_footer(text="Selecciona tu rango para abrir un ticket")
-    await interaction.response.send_message(embed=embed, view=TicketMontoView())
+    await interaction.followup.send(embed=embed, view=TicketMontoView())
 
 # ─────────────────────────────────────────
 #  Iniciar el bot
 # ─────────────────────────────────────────
 client.run(TOKEN)
+
