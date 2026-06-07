@@ -158,6 +158,52 @@ async def crear_ticket(interaction: discord.Interaction, monto: str):
     )
 
 
+# ─────────────────────────────────────────
+#  Comando de barra: /agregar
+# ─────────────────────────────────────────
+@client.tree.command(name="agregar", description="Agrega a una persona al ticket por su ID de Discord")
+async def agregar(interaction: discord.Interaction, userid: str):
+    # Verificar que el comando se use dentro de un ticket
+    if not interaction.channel.name.startswith("ticket-"):
+        await interaction.response.send_message(
+            "⚠️ Este comando solo se puede usar dentro de un ticket.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        usuario = await client.fetch_user(int(userid))
+        miembro = interaction.guild.get_member(usuario.id)
+
+        if not miembro:
+            await interaction.response.send_message(
+                f"⚠️ No se encontró al usuario con ID `{userid}` en este servidor.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.channel.set_permissions(
+            miembro,
+            read_messages=True,
+            send_messages=True
+        )
+
+        await interaction.response.send_message(
+            f"✅ {miembro.mention} ha sido agregado al ticket por {interaction.user.mention}."
+        )
+
+    except ValueError:
+        await interaction.response.send_message(
+            "⚠️ ID inválida. Asegúrate de poner solo números.",
+            ephemeral=True
+        )
+    except discord.NotFound:
+        await interaction.response.send_message(
+            f"⚠️ No se encontró ningún usuario con la ID `{userid}`.",
+            ephemeral=True
+        )
+
+
 # Comando para enviar el panel de tickets al canal
 @client.tree.command(name="paneltickets", description="Envía el panel de tickets al canal actual")
 @app_commands.checks.has_permissions(administrator=True)
@@ -192,4 +238,3 @@ async def on_ready():
 #  Iniciar el bot
 # ─────────────────────────────────────────
 client.run(TOKEN)
-
